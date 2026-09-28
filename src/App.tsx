@@ -129,6 +129,7 @@ function FeedbackBoard({ feedback, counts, filter, setFilter, search, setSearch,
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null)
   const dragFrom = useRef<{ x: number; y: number } | null>(null)
   const startDrag = (event: ReactPointerEvent<HTMLElement>, id: string) => {
+    if ((event.target as HTMLElement).closest('button')) return
     event.preventDefault()
     try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* ignore */ }
     dragFrom.current = { x: event.clientX, y: event.clientY }
