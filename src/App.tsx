@@ -1,160 +1,171 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
-import { collection, doc, getDocs, orderBy, query, updateDoc } from 'firebase/firestore'
-import { signInAnonymously } from 'firebase/auth'
-import { auth, db } from './firebase'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { categoryLabels, csv, estados, inPeriod, matchesBoolean, perfiles, type Estado, type Feedback, type Stat } from './data'
+import { useControlData } from './useControlData'
 import './App.css'
 
-type Estado = 'pendiente' | 'en proceso' | 'completado'
-type Categoria = 'log' | 'error' | 'sugerencia' | 'otro'
-type Feedback = { id: string; alias?: string; comentario?: string; estado?: Estado; tipo?: string; marca?: string; modelo?: string; sdkAndroid?: number; versionAndroid?: string; versionApp?: string; fecha: Date }
-type Stat = { id: string; perfil: string; perfilEtiqueta: string; conoceTerminos: boolean; versionApp: string; fecha: Date }
-type Column = { estado: Estado; label: string; color: string }
-
-const columns: Column[] = [
-  { estado: 'pendiente', label: 'Pendiente', color: 'amber' },
-  { estado: 'en proceso', label: 'En proceso', color: 'blue' },
-  { estado: 'completado', label: 'Completado', color: 'green' },
+type View = 'resumen' | 'feedback' | 'logs' | 'formularios'
+type Theme = 'light' | 'dark' | 'system'
+type IconName = 'grid' | 'message' | 'terminal' | 'form' | 'sun' | 'moon' | 'monitor' | 'search' | 'arrow' | 'download' | 'refresh' | 'close' | 'check' | 'clock' | 'users' | 'chevron' | 'copy'
+const paths: Record<IconName, ReactNode> = {
+  grid: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>,
+  message: <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0ZM7 9h10M7 13h6"/>,
+  terminal: <><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></>,
+  form: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h3"/></>,
+  sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></>,
+  moon: <path d="M20.5 13A9 9 0 0 1 11 3.5 9 9 0 1 0 20.5 13Z"/>,
+  monitor: <><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></>,
+  search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></>,
+  arrow: <path d="M5 12h14m-5-5 5 5-5 5"/>, download: <path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>,
+  refresh: <path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/>, close: <path d="m6 6 12 12M6 18 18 6"/>,
+  check: <path d="m5 12 4 4L19 6"/>, clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+  users: <><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3m1-16a3 3 0 0 1 0 6m3 10v-3a6 6 0 0 0-2-4"/></>,
+  chevron: <path d="m9 5 7 7-7 7"/>, copy: <><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></>,
+}
+function AppLogo({ className = '' }: { className?: string }) { return <span className={`app-logo ${className}`} aria-hidden="true"><img className="logo-light" src={`${import.meta.env.BASE_URL}branding/logo-jade.webp`} alt="" width="512" height="512"/><img className="logo-dark" src={`${import.meta.env.BASE_URL}branding/logo-forest.webp`} alt="" width="512" height="512"/></span> }
+function Icon({ name, size = 20 }: { name: IconName; size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg> }
+const views: { id: View; label: string; icon: IconName; description: string }[] = [
+  { id: 'resumen', label: 'Resumen', icon: 'grid', description: 'Una mirada a lo que está pasando en la aplicación.' },
+  { id: 'feedback', label: 'Feedback', icon: 'message', description: 'Escucha a tus usuarios y da seguimiento a cada reporte.' },
+  { id: 'logs', label: 'Logs', icon: 'terminal', description: 'Diagnósticos de la aplicación, con todo su contexto.' },
+  { id: 'formularios', label: 'Formularios', icon: 'form', description: 'Conoce los perfiles y las respuestas del cuestionario.' },
 ]
-const formatDate = (date: Date) => new Intl.DateTimeFormat('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(date)
-const toDate = (value: unknown) => value && typeof value === 'object' && 'toDate' in value ? (value as { toDate: () => Date }).toDate() : new Date()
-const getCategory = (tipo?: string): Categoria => {
-  const normalized = (tipo || '').trim().toLowerCase()
-  if (normalized.includes('log')) return 'log'
-  if (normalized.includes('bug') || normalized.includes('error')) return 'error'
-  if (normalized.includes('mejora') || normalized.includes('sugerencia')) return 'sugerencia'
-  return 'otro'
+const dateFormat = new Intl.DateTimeFormat('es-BO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/La_Paz' })
+const formatDate = (date: Date | null) => date ? dateFormat.format(date) : 'Sin fecha'
+const triLabel = (value: boolean | null, yes = 'Sí', no = 'No') => value === null ? 'Sin dato' : value ? yes : no
+const versionLabel = (value: string) => value || 'Sin versión'
+const deviceLabel = (item: Feedback) => [item.marca, item.modelo].filter(v => v && v !== '-').join(' ') || 'Sin dispositivo'
+const pct = (value: number, total: number) => total ? Math.round(value / total * 100) : 0
+function initialTheme(): Theme { try { const value = localStorage.getItem('ab-theme'); if (value === 'light' || value === 'dark') return value } catch { /* almacenamiento no disponible */ } return 'system' }
+function download(name: string, content: string, type = 'text/csv;charset=utf-8') {
+  const url = URL.createObjectURL(new Blob([content], { type }))
+  const link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-const categoryLabel = (tipo?: string) => getCategory(tipo) === 'log' ? 'Log' : getCategory(tipo) === 'error' ? 'Error' : getCategory(tipo) === 'sugerencia' ? 'Sugerencia' : 'Otro'
-const priority = (tipo?: string) => getCategory(tipo) === 'log' ? 0 : getCategory(tipo) === 'error' ? 1 : getCategory(tipo) === 'sugerencia' ? 2 : 3
-const copyFeedback = async (item: Feedback) => {
-  const text = [
-    item.comentario ? `Comentario: ${item.comentario}` : '',
-    item.alias ? `Reportó: ${item.alias}` : '',
-    `Dispositivo: ${[item.marca, item.modelo].filter(Boolean).join(' ') || 'No indicado'}`,
-    `Android: ${item.versionAndroid || 'No indicado'}${item.sdkAndroid ? ` (SDK ${item.sdkAndroid})` : ''}`,
-    item.versionApp ? `Versión app: ${item.versionApp}` : '',
-    `Fecha: ${formatDate(item.fecha)}`,
-  ].filter(Boolean).join('\n')
-  if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
-  else {
-    const area = document.createElement('textarea'); area.value = text; area.style.position = 'fixed'; area.style.opacity = '0'
-    document.body.appendChild(area); area.select(); document.execCommand('copy'); document.body.removeChild(area)
-  }
-}
-const profileColors = ['#f2b765', '#70a7ff', '#f07868', '#5ed6ad']
+function exportFeedback(items: Feedback[], name: string) { download(name, csv([['ID', 'Tipo', 'Estado', 'Alias / UUID', 'Comentario', 'Premium', 'Marca', 'Modelo', 'Android', 'SDK', 'Versión app', 'Fecha'], ...items.map(item => [item.id, item.tipo, item.estado, item.alias, item.comentario, item.premium, item.marca, item.modelo, item.versionAndroid, item.sdkAndroid, item.versionApp, item.fecha?.toISOString()])])) }
+function exportStats(items: Stat[]) { download('formularios-arancel.csv', csv([['ID', 'UUID', 'Perfil', 'Conoce términos', '16 años cumplidos', 'Premium', 'Versión app', 'Fecha'], ...items.map(item => [item.id, item.uuid, item.perfilEtiqueta, item.conoceTerminos, item.edad16Cumplida, item.premium, item.versionApp, item.fecha?.toISOString()])])) }
 
 function App() {
-  const [feedback, setFeedback] = useState<Feedback[]>([])
-  const [stats, setStats] = useState<Stat[]>([])
-  const [tab, setTab] = useState<'feedback' | 'estadisticas'>('feedback')
-  const [filter, setFilter] = useState<Categoria | 'todos'>('todos')
-  const [search, setSearch] = useState('')
-  const [dark, setDark] = useState(true)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [dragged, setDragged] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState<Record<Estado, boolean>>({ pendiente: false, 'en proceso': false, completado: false })
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
+  const data = useControlData()
+  const [view, setView] = useState<View>('resumen')
+  const [theme, setTheme] = useState<Theme>(initialTheme)
+  const [period, setPeriod] = useState('todos')
+  const [edition, setEdition] = useState('todos')
+  const [version, setVersion] = useState('todos')
+  const [selected, setSelected] = useState<Feedback | Stat | null>(null)
+  const [online, setOnline] = useState(navigator.onLine)
   useEffect(() => {
-    const load = async () => {
-      try {
-        if (!auth.currentUser) await signInAnonymously(auth)
-        const [feedbackSnapshot, statsSnapshot] = await Promise.all([
-          getDocs(query(collection(db, 'feedbacks'), orderBy('fecha', 'desc'))),
-          getDocs(query(collection(db, 'estadistica'), orderBy('fecha', 'desc'))),
-        ])
-        setFeedback(feedbackSnapshot.docs.map((item) => ({ id: item.id, ...item.data(), fecha: toDate(item.data().fecha) })) as Feedback[])
-        setStats(statsSnapshot.docs.map((item) => ({ id: item.id, ...item.data(), fecha: toDate(item.data().fecha) })) as Stat[])
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : 'No se pudo conectar con Firebase.')
-      } finally {
-        setLoading(false)
-      }
-    }
-    void load()
-  }, [])
+    const media = matchMedia('(prefers-color-scheme: dark)')
+    const update = () => { document.documentElement.dataset.theme = theme === 'system' ? media.matches ? 'dark' : 'light' : theme }
+    update(); media.addEventListener('change', update)
+    try { localStorage.setItem('ab-theme', theme) } catch { /* almacenamiento no disponible */ }
+    return () => media.removeEventListener('change', update)
+  }, [theme])
+  useEffect(() => { const update = () => setOnline(navigator.onLine); window.addEventListener('online', update); window.addEventListener('offline', update); return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) } }, [])
+  const versions = [...new Set([...data.feedback, ...data.stats].map(item => item.versionApp).filter(Boolean))].sort()
+  const filteredFeedback = useMemo(() => data.feedback.filter(item => inPeriod(item.fecha, period) && matchesBoolean(item.premium, edition) && (version === 'todos' || item.versionApp === version)), [data.feedback, period, edition, version])
+  const filteredStats = useMemo(() => data.stats.filter(item => inPeriod(item.fecha, period) && matchesBoolean(item.premium, edition) && (version === 'todos' || item.versionApp === version)), [data.stats, period, edition, version])
+  const feedback = filteredFeedback.filter(item => item.categoria !== 'log')
+  const logs = filteredFeedback.filter(item => item.categoria === 'log')
+  const current = views.find(item => item.id === view)!
+  const busy = data.loading.feedback || data.loading.stats
+  const hasErrors = !!(data.errors.feedback || data.errors.stats)
+  const cached = data.cached.feedback || data.cached.stats
+  const connection = !online ? 'Sin conexión' : hasErrors ? 'Revisar conexión' : busy ? 'Conectando…' : cached ? 'Esperando servidor' : 'En tiempo real'
+  const detail = selected ? 'comentario' in selected ? data.feedback.find(item => item.id === selected.id) ?? selected : data.stats.find(item => item.id === selected.id) ?? selected : null
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    const context = canvas?.getContext('2d')
-    if (!canvas || !context) return
-    const draw = () => {
-      const ratio = window.devicePixelRatio || 1
-      const width = canvas.clientWidth
-      const height = canvas.clientHeight
-      canvas.width = width * ratio
-      canvas.height = height * ratio
-      context.setTransform(ratio, 0, 0, ratio, 0, 0)
-      context.clearRect(0, 0, width, height)
-      const labels = ['Estudiante', 'Operador', 'Importador', 'Otro']
-      const values = labels.map((label) => stats.filter((item) => item.perfilEtiqueta === label).length)
-      const max = Math.max(...values, 1)
-      const slot = (width - 40) / labels.length
-      const barWidth = Math.min(52, slot - 20)
-      context.strokeStyle = dark ? '#293644' : '#e4e9e4'
-      for (let y = 24; y < height - 27; y += 38) { context.beginPath(); context.moveTo(8, y); context.lineTo(width - 8, y); context.stroke() }
-      values.forEach((value, index) => {
-        const x = 20 + index * slot + (slot - barWidth) / 2
-        const barHeight = value / max * (height - 80)
-        const y = height - 37 - barHeight
-        context.fillStyle = ['#f2b765', '#70a7ff', '#f07868', '#5ed6ad'][index]
-        context.beginPath(); context.roundRect(x, y, barWidth, barHeight, 6); context.fill()
-        context.fillStyle = dark ? '#edf2f7' : '#26342e'; context.font = '600 12px Manrope'; context.textAlign = 'center'; context.fillText(String(value), x + barWidth / 2, y - 9)
-        context.fillStyle = dark ? '#8e9baa' : '#718078'; context.font = '11px Manrope'; context.fillText(labels[index], x + barWidth / 2, height - 13)
-      })
-    }
-    draw(); window.addEventListener('resize', draw)
-    return () => window.removeEventListener('resize', draw)
-  }, [stats, dark])
-
-  const move = async (id: string, estado: Estado) => {
-    setFeedback((items) => items.map((item) => item.id === id ? { ...item, estado } : item))
-    try { await updateDoc(doc(db, 'feedbacks', id), { estado }) } catch { setError('El estado cambió solo localmente. Revisa las reglas de Firestore.') }
-  }
-  const visible = feedback
-    .filter((item) => (filter === 'todos' || getCategory(item.tipo) === filter) && `${item.alias} ${item.comentario} ${item.modelo}`.toLowerCase().includes(search.toLowerCase()))
-  const counts = columns.map(({ estado }) => feedback.filter((item) => (item.estado ?? 'pendiente') === estado).length)
-  const profileCounts = ['estudiante', 'operador', 'importador', 'otro'].map((profile) => stats.filter((item) => item.perfil === profile).length)
-  const topProfile = ['Estudiantes', 'Operadores', 'Importadores', 'Otros'][profileCounts.indexOf(Math.max(...profileCounts))] || 'Sin datos'
-
-  return <div className={`app ${dark ? 'dark' : 'light'}`}>
-    <header className="topbar"><a className="brand" href="/webdeestadisticas/"><span>AB</span><strong>ARANCEL BOLIVIA <i>2026 no oficial</i></strong></a><nav><button className={tab === 'feedback' ? 'active' : ''} onClick={() => setTab('feedback')}>Feedback <b>{feedback.length}</b></button><button className={tab === 'estadisticas' ? 'active' : ''} onClick={() => setTab('estadisticas')}>Estadísticas</button></nav><div className="top-tools"><span className={`connection ${loading ? '' : error ? 'bad' : 'good'}`}><i />{loading ? 'Conectando' : error ? 'Revisar conexión' : 'Firebase activo'}</span><button className="theme-toggle" onClick={() => setDark((value) => !value)} aria-label="Cambiar tema">{dark ? '☼' : '☾'}</button><span className="avatar">AP</span></div></header>
-    <main><div className="page-title"><div><span className="overline">ARANCEL BOLIVIA / {tab === 'feedback' ? 'FEEDBACK' : 'ESTADÍSTICAS'}</span><h1>{tab === 'feedback' ? 'Reportes y solicitudes' : 'Uso de la aplicación'}</h1></div><span className="date-label">11 SEP 2026</span></div>{error && <div className="error-banner">{error}</div>}{tab === 'feedback' ? <FeedbackBoard feedback={visible} counts={counts} filter={filter} setFilter={setFilter} search={search} setSearch={setSearch} dragged={dragged} setDragged={setDragged} move={move} loading={loading} expanded={expanded} setExpanded={setExpanded} /> : <Stats stats={stats} profileCounts={profileCounts} topProfile={topProfile} canvasRef={canvasRef} />}</main>
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Ir al contenido</a>
+    <aside className="sidebar">
+      <a className="brand" href={import.meta.env.BASE_URL} aria-label="Arancel Bolivia, inicio"><AppLogo/><span className="brand-label">Arancel Bolivia<small>Centro de control</small></span></a>
+      <span className="nav-caption">ESPACIO DE TRABAJO</span>
+      <nav aria-label="Navegación principal">{views.map(item => <button key={item.id} aria-label={item.label} title={item.label} className={`nav-item ${view === item.id ? 'active' : ''}`} onClick={() => setView(item.id)} aria-current={view === item.id ? 'page' : undefined}><Icon name={item.icon}/><span>{item.label}</span>{item.id === 'feedback' && <b>{data.feedback.filter(item => item.categoria !== 'log' && item.estado !== 'completado').length}</b>}</button>)}</nav>
+      <div className="sidebar-bottom"><div className="workspace-note"><AppLogo className="workspace-symbol"/><div><strong>Arancel Bolivia 2026</strong><small>Aplicación no oficial</small></div></div><div className="theme-switch" role="group" aria-label="Apariencia">{(['light', 'dark', 'system'] as const).map((value, i) => <button key={value} className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)} aria-pressed={theme === value} title={['Tema claro', 'Tema oscuro', 'Tema del sistema'][i]} aria-label={['Tema claro', 'Tema oscuro', 'Tema del sistema'][i]}><Icon name={(['sun', 'moon', 'monitor'] as const)[i]} size={17}/><span>{['Claro', 'Oscuro', 'Auto'][i]}</span></button>)}</div></div>
+    </aside>
+    <div className="main-shell">
+      <header className="topbar"><div className="breadcrumb">Centro de control<Icon name="chevron" size={13}/><strong>{current.label}</strong></div><div className="header-right"><span className={`connection ${!online || hasErrors ? 'bad' : busy || cached ? 'waiting' : ''}`} role="status"><i/>{connection}</span><button className="icon-button" title="Volver a conectar" aria-label="Volver a conectar con Firebase" onClick={data.retry}><Icon name="refresh" size={17}/></button></div></header>
+      <main id="main-content" tabIndex={-1}>
+        <div className="page-heading"><div><div className="eyebrow">ARANCEL BOLIVIA <span>/</span> OPERACIONES</div><h1>{view === 'resumen' ? 'Todo bajo control.' : current.label}</h1><p>{current.description}</p></div><div className="heading-date"><Icon name="clock" size={15}/>{new Intl.DateTimeFormat('es-BO', { dateStyle: 'long', timeZone: 'America/La_Paz' }).format(new Date())}</div></div>
+        {hasErrors && <div className="error-banner" role="alert"><div><strong>No se pudieron sincronizar todos los datos.</strong>{data.errors.feedback && <p>Feedback y logs: {data.errors.feedback}</p>}{data.errors.stats && <p>Formularios: {data.errors.stats}</p>}</div><button className="button" onClick={data.retry}>Reintentar</button></div>}
+        {!online && <div className="notice" role="status">Estás sin conexión. Los datos mostrados pueden estar desactualizados.</div>}
+        {data.actionError && <div className="error-banner" role="alert">{data.actionError}</div>}
+        <section className="global-filters" aria-label="Filtros generales"><div className="filter-heading"><span className="filter-dot"/>Vista general</div><div className="filter-controls"><Select label="Período" value={period} onChange={setPeriod} options={[["todos", "Todo el período"], ["7", "Últimos 7 días"], ["30", "Últimos 30 días"], ["90", "Últimos 90 días"]]}/><Select label="Edición" value={edition} onChange={setEdition} options={[["todos", "Todas las ediciones"], ["si", "Premium"], ["no", "Estándar"], ["sin-dato", "Sin dato de edición"]]}/><Select label="Versión" value={version} onChange={setVersion} options={[["todos", "Todas las versiones"], ...versions.map(v => [v, v]) ]}/>{(period !== 'todos' || edition !== 'todos' || version !== 'todos') && <button className="text-button" onClick={() => { setPeriod('todos'); setEdition('todos'); setVersion('todos') }}>Limpiar filtros</button>}</div></section>
+        {view === 'resumen' && <Overview feedback={feedback} logs={logs} stats={filteredStats} loading={data.loading} onNavigate={setView} onSelect={setSelected}/>}
+        {(view === 'feedback' || view === 'logs') && <Reports key={view} items={view === 'logs' ? logs : feedback} isLogs={view === 'logs'} loading={data.loading.feedback} saving={data.saving} move={data.move} onSelect={setSelected}/>}
+        {view === 'formularios' && <Forms items={filteredStats} loading={data.loading.stats} onSelect={setSelected}/>}
+        <footer><span>Arancel Bolivia · Centro de control</span><span>{data.lastSync ? `Última sincronización: ${formatDate(data.lastSync)} · Bolivia (UTC−4)` : 'Esperando la primera sincronización'}</span></footer>
+      </main>
+    </div>
+    {detail && <Detail item={detail} close={() => setSelected(null)} saving={data.saving.has(detail.id)} move={data.move}/>}
   </div>
 }
 
-function FeedbackBoard({ feedback, counts, filter, setFilter, search, setSearch, dragged, setDragged, move, loading, expanded, setExpanded }: { feedback: Feedback[]; counts: number[]; filter: Categoria | 'todos'; setFilter: (value: Categoria | 'todos') => void; search: string; setSearch: (value: string) => void; dragged: string | null; setDragged: (value: string | null) => void; move: (id: string, estado: Estado) => Promise<void>; loading: boolean; expanded: Record<Estado, boolean>; setExpanded: (value: (current: Record<Estado, boolean>) => Record<Estado, boolean>) => void }) {
-  const [hovered, setHovered] = useState<Estado | null>(null)
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null)
-  const dragFrom = useRef<{ x: number; y: number } | null>(null)
-  const startDrag = (event: ReactPointerEvent<HTMLElement>, id: string) => {
-    if ((event.target as HTMLElement).closest('button')) return
-    event.preventDefault()
-    try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* ignore */ }
-    dragFrom.current = { x: event.clientX, y: event.clientY }
-    setDragged(id)
-  }
-  const dragMove = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!dragged) return
-    event.preventDefault()
-    const from = dragFrom.current
-    if (from) setDragOffset({ x: event.clientX - from.x, y: event.clientY - from.y })
-    const element = document.elementFromPoint(event.clientX, event.clientY)
-    const column = element?.closest?.('[data-col]') as HTMLElement | null
-    setHovered((column?.dataset.col as Estado | undefined) ?? null)
-  }
-  const endDrag = () => {
-    if (dragged && hovered) void move(dragged, hovered)
-    setDragged(null)
-    setHovered(null)
-    setDragOffset(null)
-    dragFrom.current = null
-  }
-  return <><section className="metrics"><Metric label="Recibidos" value={feedback.length} /><Metric label="Pendientes" value={counts[0]} color="amber" /><Metric label="En proceso" value={counts[1]} color="blue" /><Metric label="Completados" value={counts[2]} color="green" /></section><div className="board-tools"><div className="filters"><button className={filter === 'todos' ? 'selected' : ''} onClick={() => setFilter('todos')}>Todos</button><button className={filter === 'log' ? 'selected log-filter' : ''} onClick={() => setFilter('log')}>Logs</button><button className={filter === 'error' ? 'selected error-filter' : ''} onClick={() => setFilter('error')}>Errores</button><button className={filter === 'sugerencia' ? 'selected suggestion-filter' : ''} onClick={() => setFilter('sugerencia')}>Sugerencias</button><button className={filter === 'otro' ? 'selected other-filter' : ''} onClick={() => setFilter('otro')}>Otros</button></div><label className="search">⌕<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar alias, modelo o reporte" /></label></div><section className="board">{columns.map((column) => { const columnItems = feedback.filter((item) => (item.estado ?? 'pendiente') === column.estado).sort((first, second) => column.estado === 'pendiente' ? priority(first.tipo) - priority(second.tipo) || second.fecha.getTime() - first.fecha.getTime() : second.fecha.getTime() - first.fecha.getTime()); const shownItems = expanded[column.estado] ? columnItems : columnItems.slice(0, 5); return <div className={`column ${hovered === column.estado ? 'drop-target' : ''}`} data-col={column.estado} key={column.estado}><div className="column-title"><span className={`dot ${column.color}`} /><h2>{column.label}</h2><b>{columnItems.length}</b></div><div className="card-list">{loading ? <p className="empty">Cargando Firebase...</p> : shownItems.map((item) => <FeedbackCard item={item} key={item.id} onStartDrag={(event) => startDrag(event, item.id)} onDragMove={dragMove} onEndDrag={endDrag} isDragging={dragged === item.id} dragOffset={dragOffset} />)}</div>{columnItems.length > 5 && <button className="show-more" onClick={() => setExpanded((current) => ({ ...current, [column.estado]: !current[column.estado] }))}>{expanded[column.estado] ? 'Mostrar menos' : `Mostrar más (${columnItems.length - 5})`}</button>}</div> })}</section></>
+function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: string[][] }) { return <label className="select-field"><span>{label}</span><select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>{options.map(([v, name]) => <option value={v} key={v}>{name}</option>)}</select></label> }
+function Metric({ label, value, note, icon, tone = 'accent', loading = false }: { label: string; value: number | string; note: string; icon: IconName; tone?: string; loading?: boolean }) { return <article className="metric"><div className="metric-top"><span>{label}</span><span className={`metric-icon ${tone}`}><Icon name={icon} size={18}/></span></div><strong className={loading ? 'skeleton-text' : ''}>{loading ? '—' : value}</strong><small>{note}</small></article> }
+function Empty({ title, description = 'Prueba con otros filtros o espera nuevos envíos de la aplicación.', loading = false }: { title: string; description?: string; loading?: boolean }) { return <div className="empty-state" role="status"><span className={loading ? 'empty-icon spinning' : 'empty-icon'}><Icon name={loading ? 'refresh' : 'form'} size={25}/></span><strong>{loading ? 'Conectando con tus datos…' : title}</strong><p>{loading ? 'Consultando los registros de la aplicación.' : description}</p></div> }
+function Badge({ children, tone = '' }: { children: ReactNode; tone?: string }) { return <span className={`badge ${tone}`}>{children}</span> }
+function PanelTitle({ kicker, title, children }: { kicker?: string; title: string; children?: ReactNode }) { return <div className="panel-title"><div>{kicker && <span className="eyebrow">{kicker}</span>}<h2>{title}</h2></div>{children}</div> }
+function Distribution({ items }: { items: Stat[] }) {
+  const groups = Object.entries(perfiles).map(([id, label]) => ({ label, count: items.filter(item => item.perfil === id).length }))
+  const unknown = items.filter(item => !Object.hasOwn(perfiles, item.perfil)).length
+  if (unknown) groups.push({ label: 'Sin clasificar', count: unknown })
+  return <div className="distribution">{groups.map((group, index) => <div className="distribution-row" key={group.label}><div><span><i className={`profile-dot p${index}`}/>{group.label}</span><strong>{group.count}<small>{pct(group.count, items.length)}%</small></strong></div><div className="bar-track"><span className={`bar-fill p${index}`} style={{ width: `${pct(group.count, items.length)}%` }}/></div></div>)}</div>
+}
+function Overview({ feedback, logs, stats, loading, onNavigate, onSelect }: { feedback: Feedback[]; logs: Feedback[]; stats: Stat[]; loading: { feedback: boolean; stats: boolean }; onNavigate: (view: View) => void; onSelect: (item: Feedback | Stat) => void }) {
+  const pending = feedback.filter(item => item.estado !== 'completado').length
+  const recent = [...feedback, ...logs].sort((a, b) => (b.fecha?.getTime() ?? 0) - (a.fecha?.getTime() ?? 0)).slice(0, 5)
+  const known = stats.filter(item => item.conoceTerminos !== null)
+  return <><section className="metrics"><Metric label="Feedback recibido" value={feedback.length} note={`${pending} reportes por atender`} icon="message" loading={loading.feedback}/><Metric label="Logs de diagnóstico" value={logs.length} note={`${logs.filter(item => item.estado === 'pendiente').length} pendientes de revisar`} icon="terminal" tone="amber" loading={loading.feedback}/><Metric label="Formularios recibidos" value={stats.length} note="Registros del cuestionario" icon="form" tone="blue" loading={loading.stats}/><Metric label="Edición Premium" value={stats.filter(item => item.premium === true).length} note={`${stats.filter(item => item.premium === null).length} formularios sin dato de edición`} icon="users" tone="purple" loading={loading.stats}/></section>
+    <section className="overview-grid"><div className="panel"><PanelTitle kicker="TU COMUNIDAD" title="¿Quién usa la aplicación?"><button className="text-button" onClick={() => onNavigate('formularios')}>Ver formularios <Icon name="arrow" size={15}/></button></PanelTitle>{loading.stats ? <Empty title="" loading/> : stats.length ? <Distribution items={stats}/> : <Empty title="Todavía no hay formularios"/>}<div className="panel-foot"><span className="mini-dot"/>{stats.length} respuestas en el período seleccionado</div></div>
+    <div className="insight-panel"><span className="eyebrow">UNA EXPERIENCIA MÁS CLARA</span><AppLogo className="insight-logo"/><h2>Entender a los usuarios<br/>es el primer paso.</h2><p>Las respuestas del cuestionario ayudan a conocer la experiencia de tu comunidad con los términos aduaneros.</p><div className="insight-number">{loading.stats || !known.length ? '—' : `${pct(known.filter(item => item.conoceTerminos).length, known.length)}%`}<span>conoce los términos aduaneros</span></div><small>{known.length} respuestas con este dato · {stats.length - known.length} sin dato</small></div></section>
+    <section className="panel activity-panel"><PanelTitle kicker="AL DÍA" title="Actividad reciente"><button className="text-button" onClick={() => onNavigate('feedback')}>Abrir feedback <Icon name="arrow" size={15}/></button></PanelTitle>{loading.feedback ? <Empty title="" loading/> : !recent.length ? <Empty title="Sin actividad en este período"/> : <div className="activity-list">{recent.map(item => <button className="activity-row" key={item.id} onClick={() => onSelect(item)}><span className={`activity-icon ${item.categoria}`}><Icon name={item.categoria === 'log' ? 'terminal' : 'message'} size={19}/></span><div><strong>{item.comentario || 'Sin descripción'}</strong><span>{item.categoria === 'log' ? 'Diagnóstico automático' : item.alias || 'Anónimo'} · {versionLabel(item.versionApp)}</span></div><Badge tone={item.categoria}>{categoryLabels[item.categoria]}</Badge><time>{formatDate(item.fecha)}</time><Icon name="chevron" size={16}/></button>)}</div>}</section></>
 }
 
-function FeedbackCard({ item, onStartDrag, onDragMove, onEndDrag, isDragging, dragOffset }: { item: Feedback; onStartDrag: (event: ReactPointerEvent<HTMLElement>) => void; onDragMove: (event: ReactPointerEvent<HTMLElement>) => void; onEndDrag: () => void; isDragging: boolean; dragOffset: { x: number; y: number } | null }) { const [copied, setCopied] = useState(false); const initials = (item.alias || 'Usuario').split(' ').map((part) => part[0]).slice(0, 2).join(''); const type = getCategory(item.tipo); const handleCopy = () => { void copyFeedback(item).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1800) }) }; return <article className={`feedback-card ${isDragging ? 'dragging' : ''}`} onPointerDown={onStartDrag} onPointerMove={onDragMove} onPointerUp={onEndDrag} onPointerCancel={onEndDrag} style={isDragging && dragOffset ? { transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` } : undefined}><div className="card-header"><span className={`kind ${type}`}>{categoryLabel(item.tipo)}</span><time>{formatDate(item.fecha)}</time></div><h3>{item.comentario || 'Sin descripción'}</h3><div className="reporter"><span>{initials}</span><strong>{item.alias || 'Anónimo'}</strong>{item.estado === 'en proceso' && <button className={`copy-btn ${copied ? 'copied' : ''}`} onClick={handleCopy} aria-label="Copiar detalles">{copied ? 'Copiado' : 'Copiar'}</button>}</div><div className="device-grid"><span><small>DISPOSITIVO</small>{item.marca || 'No indicado'} · {item.modelo || 'No indicado'}</span><span><small>ANDROID</small>{item.versionAndroid || 'No indicado'} {item.sdkAndroid ? `(SDK ${item.sdkAndroid})` : ''}</span><span><small>VERSIÓN APP</small>{item.versionApp || 'No indicada'}</span></div></article> }
-function Metric({ label, value, color = '' }: { label: string; value: number; color?: string }) { return <div className="metric"><span className={`metric-mark ${color}`} /><div><small>{label}</small><strong>{value}</strong></div></div> }
-function Stats({ stats, profileCounts, topProfile, canvasRef }: { stats: Stat[]; profileCounts: number[]; topProfile: string; canvasRef: RefObject<HTMLCanvasElement | null> }) { const known = Math.round(stats.filter((item) => item.conoceTerminos).length / Math.max(stats.length, 1) * 100); return <><section className="stats-intro"><div><span className="overline">SEÑAL DE USO · CUESTIONARIO INICIAL</span><h2>Entender quién usa<br /><em>la aplicación.</em></h2><p>Una lectura simple de los perfiles que están incorporándose a Arancel Bolivia 2026.</p></div><strong>{stats.length}<small>respuestas</small></strong></section><section className="stats-grid"><div className="panel"><div className="panel-title"><span><small>PERFILES</small><h2>Distribución</h2></span><b>últimas respuestas</b></div><canvas ref={canvasRef} /></div><div className="panel ranking"><span className="panel-kicker">RANKING DE ADOPCIÓN</span><h2>{topProfile}</h2><p>Es el perfil con más respuestas registradas.</p>{['Estudiantes', 'Operadores', 'Importadores', 'Otros'].map((label, index) => <div className="rank" key={label}><span>{label}</span><div><i style={{ width: `${Math.max(profileCounts[index] / Math.max(...profileCounts, 1) * 100, 3)}%`, background: profileColors[index] }} /></div><b>{profileCounts[index]}</b></div>)}</div></section><section className="insights"><div><strong>{known}%</strong><span>conocía los términos aduaneros</span></div><div><strong>{new Set(stats.map((item) => item.versionApp)).size}</strong><span>versiones activas</span></div><div><strong>{stats.length}</strong><span>respuestas registradas</span></div></section></> }
+function Reports({ items, isLogs, loading, saving, move, onSelect }: { items: Feedback[]; isLogs: boolean; loading: boolean; saving: Set<string>; move: (id: string, estado: Estado) => Promise<void>; onSelect: (item: Feedback) => void }) {
+  const [search, setSearch] = useState('')
+  const [kind, setKind] = useState('todos')
+  const [status, setStatus] = useState('todos')
+  const [layout, setLayout] = useState<'board' | 'list'>(isLogs ? 'list' : 'board')
+  const [page, setPage] = useState(1)
+  const [expanded, setExpanded] = useState<Partial<Record<Estado, boolean>>>({})
+  const visible = items.filter(item => (kind === 'todos' || kind === item.categoria) && (status === 'todos' || item.estado === status) && `${item.id} ${item.tipo} ${item.alias} ${item.comentario} ${item.marca} ${item.modelo} ${item.versionApp} ${item.versionAndroid}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+  const totalPages = Math.max(1, Math.ceil(visible.length / 20))
+  const currentPage = Math.min(page, totalPages)
+  return <><section className="metrics"><Metric label={isLogs ? 'Logs recibidos' : 'Reportes recibidos'} value={items.length} note="Según los filtros generales" icon={isLogs ? 'terminal' : 'message'} loading={loading}/>{estados.map((state, i) => <Metric key={state} label={['Pendientes', 'En proceso', 'Completados'][i]} value={items.filter(item => item.estado === state).length} note={['Por revisar', 'En seguimiento', 'Revisión finalizada'][i]} icon={i === 2 ? 'check' : 'clock'} tone={['amber', 'blue', 'accent'][i]} loading={loading}/>)}</section>
+    <section className="report-toolbar"><div className="search-field"><Icon name="search" size={18}/><input aria-label={isLogs ? 'Buscar logs' : 'Buscar feedback'} placeholder={isLogs ? 'Buscar mensaje, UUID, dispositivo…' : 'Buscar reporte, alias, dispositivo…'} value={search} onChange={event => { setSearch(event.target.value); setPage(1) }}/></div><div className="toolbar-actions">{!isLogs && <Select label="Tipo" value={kind} onChange={v => { setKind(v); setPage(1) }} options={[["todos", "Todos los tipos"], ["error", "Errores"], ["sugerencia", "Sugerencias"], ["otro", "Otros"]]}/>}<Select label="Estado" value={status} onChange={v => { setStatus(v); setPage(1) }} options={[["todos", "Todos los estados"], ...estados.map(s => [s, s])]}/><button className="button" disabled={!visible.length} onClick={() => exportFeedback(visible, isLogs ? 'logs-arancel.csv' : 'feedback-arancel.csv')}><Icon name="download" size={16}/>Exportar CSV</button></div></section>
+    <div className="results-heading"><span>{visible.length} {isLogs ? 'logs' : 'reportes'} encontrados</span><div className="segmented" aria-label="Presentación"><button aria-pressed={layout === 'board'} className={layout === 'board' ? 'selected' : ''} onClick={() => setLayout('board')}><Icon name="grid" size={15}/>Tablero</button><button aria-pressed={layout === 'list'} className={layout === 'list' ? 'selected' : ''} onClick={() => setLayout('list')}><Icon name="form" size={15}/>Lista</button></div></div>
+    {loading ? <div className="panel"><Empty title="" loading/></div> : !visible.length ? <div className="panel"><Empty title={isLogs ? 'No hay logs para mostrar' : 'No hay reportes para mostrar'}/></div> : layout === 'board' ? <section className="board">{estados.map((state, index) => { const column = visible.filter(item => item.estado === state); const shown = expanded[state] ? column : column.slice(0, 12); return <div className="board-column" key={state}><div className="column-title"><span className={`status-dot state-${index}`}/><h2>{['Pendiente', 'En proceso', 'Completado'][index]}</h2><b>{column.length}</b></div><div className="card-list">{!column.length && <p className="column-empty">Sin reportes en este estado</p>}{shown.map(item => <article className="report-card" key={item.id}><button className="card-open" onClick={() => onSelect(item)}><div className="card-top"><Badge tone={item.categoria}>{categoryLabels[item.categoria]}</Badge><span className="card-version">{versionLabel(item.versionApp)}</span></div><h3 className={isLogs ? 'log-preview' : ''}>{item.comentario || 'Sin descripción'}</h3><div className="card-person"><span className="person-avatar">{isLogs ? <Icon name="terminal" size={14}/> : (item.alias || 'A').slice(0, 2).toUpperCase()}</span><strong>{item.alias || 'Anónimo'}</strong><span className={`edition-label ${item.premium ? 'premium' : ''}`}>{triLabel(item.premium, 'Premium', 'Estándar')}</span></div><div className="card-device"><Icon name="monitor" size={13}/>{deviceLabel(item)}</div></button><div className="card-bottom"><time>{formatDate(item.fecha)}</time><StateSelect item={item} saving={saving.has(item.id)} move={move}/></div></article>)}</div>{column.length > 12 && <button className="show-more" onClick={() => setExpanded(value => ({ ...value, [state]: !value[state] }))}>{expanded[state] ? 'Mostrar menos' : `Ver ${column.length - 12} más`}</button>}</div> })}</section> : <div className="panel table-panel"><div className="table-scroll"><table><thead><tr><th>{isLogs ? 'Diagnóstico' : 'Reporte'}</th><th>{isLogs ? 'Instalación / UUID' : 'Alias'}</th><th>Dispositivo</th><th>Edición / versión</th><th>Fecha</th><th>Estado</th></tr></thead><tbody>{visible.slice((currentPage - 1) * 20, currentPage * 20).map(item => <tr key={item.id}><td><button className="table-link" onClick={() => onSelect(item)}><Badge tone={item.categoria}>{categoryLabels[item.categoria]}</Badge><span className={isLogs ? 'mono' : ''}>{item.comentario || 'Sin descripción'}</span></button></td><td><span className={isLogs ? 'mono table-uuid' : ''}>{item.alias || 'Anónimo'}</span></td><td>{deviceLabel(item)}<small className="cell-sub">Android {item.versionAndroid || 'sin dato'}</small></td><td><Badge tone={item.premium ? 'premium' : ''}>{triLabel(item.premium, 'Premium', 'Estándar')}</Badge><small className="cell-sub">{versionLabel(item.versionApp)}</small></td><td className="date-cell">{formatDate(item.fecha)}</td><td><StateSelect item={item} saving={saving.has(item.id)} move={move}/></td></tr>)}</tbody></table></div><Pagination page={currentPage} pages={totalPages} total={visible.length} setPage={setPage}/></div>}
+  </>
+}
+function StateSelect({ item, saving, move }: { item: Feedback; saving: boolean; move: (id: string, state: Estado) => Promise<void> }) { return <select className={`state-select state-${estados.indexOf(item.estado)}`} disabled={saving} aria-label={`Estado del reporte ${item.id}`} value={item.estado} onChange={event => void move(item.id, event.target.value as Estado)}>{estados.map(state => <option key={state} value={state}>{state}</option>)}</select> }
+function Pagination({ page, pages, total, setPage }: { page: number; pages: number; total: number; setPage: (p: number) => void }) { return <div className="pagination"><span>{total} registros · Página {page} de {pages}</span><div><button className="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>Anterior</button><button className="button" disabled={page >= pages} onClick={() => setPage(page + 1)}>Siguiente</button></div></div> }
+
+function Forms({ items, loading, onSelect }: { items: Stat[]; loading: boolean; onSelect: (item: Stat) => void }) {
+  const [search, setSearch] = useState('')
+  const [profile, setProfile] = useState('todos')
+  const [terms, setTerms] = useState('todos')
+  const [age, setAge] = useState('todos')
+  const [page, setPage] = useState(1)
+  const visible = items.filter(item => (profile === 'todos' || (profile === 'sin-clasificar' ? !Object.hasOwn(perfiles, item.perfil) : item.perfil === profile)) && matchesBoolean(item.conoceTerminos, terms) && matchesBoolean(item.edad16Cumplida, age) && `${item.uuid} ${item.id} ${item.perfilEtiqueta} ${item.versionApp}`.toLowerCase().includes(search.trim().toLowerCase()))
+  const known = visible.filter(item => item.conoceTerminos !== null)
+  const yes = known.filter(item => item.conoceTerminos).length
+  const pages = Math.max(1, Math.ceil(visible.length / 20))
+  const change = (setter: (value: string) => void) => (value: string) => { setter(value); setPage(1) }
+  const boolOptions = [["todos", "Todas las respuestas"], ["si", "Sí"], ["no", "No"], ["sin-dato", "Sin dato"]]
+  return <><section className="form-filter-panel panel"><div className="search-field"><Icon name="search" size={18}/><input aria-label="Buscar formularios" placeholder="Buscar UUID, perfil o versión…" value={search} onChange={event => change(setSearch)(event.target.value)}/></div><Select label="Perfil" value={profile} onChange={change(setProfile)} options={[["todos", "Todos los perfiles"], ...Object.entries(perfiles), ["sin-clasificar", "Sin clasificar"]]}/><Select label="Conoce términos" value={terms} onChange={change(setTerms)} options={boolOptions}/><Select label="16 años cumplidos" value={age} onChange={change(setAge)} options={boolOptions}/><button className="text-button" onClick={() => { setSearch(''); setProfile('todos'); setTerms('todos'); setAge('todos'); setPage(1) }}>Restablecer</button></section>
+    <section className="metrics"><Metric label="Formularios" value={visible.length} note="Respuestas según los filtros" icon="form" loading={loading}/><Metric label="Conoce términos" value={known.length ? `${pct(yes, known.length)}%` : '—'} note={`${yes} sí · ${known.length - yes} no · ${visible.length - known.length} sin dato`} icon="check" tone="blue" loading={loading}/><Metric label="16 años cumplidos" value={visible.filter(item => item.edad16Cumplida === true).length} note={`${visible.filter(item => item.edad16Cumplida === false).length} no · ${visible.filter(item => item.edad16Cumplida === null).length} sin dato`} icon="users" tone="amber" loading={loading}/><Metric label="Premium" value={visible.filter(item => item.premium === true).length} note={`${visible.filter(item => item.premium === false).length} estándar · ${visible.filter(item => item.premium === null).length} sin dato`} icon="grid" tone="purple" loading={loading}/></section>
+    <section className="forms-charts"><div className="panel"><PanelTitle kicker="PERFILES" title="Tu comunidad"/>{loading ? <Empty title="" loading/> : !visible.length ? <Empty title="Sin respuestas con estos filtros"/> : <Distribution items={visible}/>}</div><div className="panel"><PanelTitle kicker="EXPERIENCIA" title="Términos aduaneros"/><div className="terms-chart"><div className="donut" style={{ background: visible.length ? `conic-gradient(var(--accent) 0 ${yes / visible.length * 100}%, var(--blue) ${yes / visible.length * 100}% ${known.length / visible.length * 100}%, var(--line) ${known.length / visible.length * 100}% 100%)` : 'var(--line)' }} role="img" aria-label={`${yes} conocen términos, ${known.length - yes} no conocen, ${visible.length - known.length} sin dato`}><div><strong>{loading ? '—' : visible.length}</strong><span>respuestas</span></div></div><div className="chart-legend">{[['Sí, conoce', yes, 'accent'], ['No conoce', known.length - yes, 'blue'], ['Sin dato', visible.length - known.length, 'muted']].map(([label, count, color]) => <div key={label}><span className={`legend-dot ${color}`}/><span>{label}</span><strong>{count}</strong></div>)}</div></div></div></section>
+    <section className="panel table-panel"><PanelTitle kicker="CUESTIONARIO DE LA APP" title="Respuestas recibidas"><button className="button" disabled={!visible.length} onClick={() => exportStats(visible)}><Icon name="download" size={16}/>Exportar CSV</button></PanelTitle><p className="table-description">Cada registro muestra la última respuesta recibida de una instalación. Los campos ausentes se indican como «Sin dato».</p>{loading ? <Empty title="" loading/> : !visible.length ? <Empty title="No hay formularios para mostrar"/> : <><div className="table-scroll"><table><thead><tr><th>Instalación / UUID</th><th>Perfil</th><th>Conoce términos</th><th>16 años cumplidos</th><th>Edición</th><th>Versión</th><th>Fecha</th></tr></thead><tbody>{visible.slice((Math.min(page, pages) - 1) * 20, Math.min(page, pages) * 20).map(item => <tr key={item.id}><td><button className="table-link uuid-link" onClick={() => onSelect(item)} title={item.uuid || item.id}><Icon name="form" size={16}/><span className="mono">{item.uuid || item.id}</span><Icon name="chevron" size={13}/></button>{!item.uuid && <small className="cell-sub">ID del documento · UUID sin dato</small>}</td><td>{item.perfilEtiqueta}</td><td><Badge tone={item.conoceTerminos === true ? 'success' : ''}>{triLabel(item.conoceTerminos)}</Badge></td><td>{triLabel(item.edad16Cumplida)}</td><td><Badge tone={item.premium ? 'premium' : ''}>{triLabel(item.premium, 'Premium', 'Estándar')}</Badge></td><td className="mono">{versionLabel(item.versionApp)}</td><td className="date-cell">{formatDate(item.fecha)}</td></tr>)}</tbody></table></div><Pagination page={Math.min(page, pages)} pages={pages} total={visible.length} setPage={setPage}/></>}</section>
+  </>
+}
+
+function Detail({ item, close, saving, move }: { item: Feedback | Stat; close: () => void; saving: boolean; move: (id: string, estado: Estado) => Promise<void> }) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const [copyStatus, setCopyStatus] = useState('')
+  const isFeedback = 'comentario' in item
+  useEffect(() => { const element = dialogRef.current; element?.showModal(); return () => element?.close() }, [])
+  const raw = JSON.stringify({ ...item.raw, id: item.id, fecha: item.fecha?.toISOString() ?? null }, null, 2)
+  const copy = async () => { try { await navigator.clipboard.writeText(raw); setCopyStatus('Detalles copiados') } catch { setCopyStatus('No se pudo copiar. Puedes descargar el JSON.') } }
+  const fields: [string, string][] = isFeedback ? [
+    ['ID del documento', item.id], [item.categoria === 'log' ? 'Instalación / UUID' : 'Alias', item.alias || 'Sin dato'], ['Edición', triLabel(item.premium, 'Premium', 'Estándar')], ['Versión de la app', versionLabel(item.versionApp)], ['Dispositivo', deviceLabel(item)], ['Android', item.versionAndroid || 'Sin dato'], ['SDK Android', item.sdkAndroid?.toString() || 'Sin dato'], ['Fecha de recepción', formatDate(item.fecha)],
+  ] : [['ID del documento', item.id], ['UUID de instalación', item.uuid || 'Sin dato'], ['Perfil', item.perfilEtiqueta], ['Conoce términos aduaneros', triLabel(item.conoceTerminos)], ['16 años cumplidos', triLabel(item.edad16Cumplida)], ['Edición', triLabel(item.premium, 'Premium', 'Estándar')], ['Versión de la app', versionLabel(item.versionApp)], ['Última recepción', formatDate(item.fecha)]]
+  return <dialog className="detail-dialog" ref={dialogRef} onCancel={event => { event.preventDefault(); close() }} onClick={event => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close() } }} aria-labelledby="detail-title"><div className="detail-head"><div><span className="eyebrow">DETALLE DEL REGISTRO</span><h2 id="detail-title">{isFeedback ? item.categoria === 'log' ? 'Log de diagnóstico' : 'Reporte de usuario' : 'Respuesta del formulario'}</h2></div><button className="icon-button" autoFocus onClick={close} aria-label="Cerrar detalle"><Icon name="close"/></button></div><div className="detail-body">{isFeedback && <><div className="detail-type"><Badge tone={item.categoria}>{item.tipo || categoryLabels[item.categoria]}</Badge><StateSelect item={item} saving={saving} move={move}/>{saving && <small role="status">Guardando…</small>}</div><pre className={`message-content ${item.categoria === 'log' ? 'log-content' : ''}`}>{item.comentario || 'Sin descripción'}</pre></>}<dl className="detail-fields">{fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><details className="raw-details"><summary>Todos los datos recibidos (JSON)</summary><pre>{raw}</pre></details></div><div className="detail-footer"><span role="status">{copyStatus}</span><button className="button" onClick={() => void copy()}><Icon name="copy" size={16}/>Copiar detalles</button><button className="button primary" onClick={() => download(`registro-${item.id}.json`, raw, 'application/json')}><Icon name="download" size={16}/>JSON</button></div></dialog>
+}
 export default App

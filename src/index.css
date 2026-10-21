@@ -1,3 +1,35 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
-:root { font-family: 'Manrope', sans-serif; color: #26342e; background: #f5f7f3; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
-* { box-sizing: border-box; } body { margin: 0; min-width: 320px; } button, input { font: inherit; } button { cursor: pointer; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  color-scheme: light;
+  --bg: #f7f9fc; --surface: #fff; --surface-2: #f1f4f8; --sidebar: #fff;
+  --text: #202d40; --muted: #66768a; --line: #e5eaf1; --accent: #167d69;
+  --accent-soft: #e8f5f0; --accent-strong: #106451; --blue: #4d7ed1; --blue-soft: #eef3fd;
+  --amber: #a66c19; --amber-soft: #fdf4e4; --purple: #7e5dc0; --purple-soft: #f3edfc;
+  --red: #b74e54; --red-soft: #fceff0; --shadow: 0 4px 20px #20304b04;
+  font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased;
+  background: var(--bg); color: var(--text);
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #10161f; --surface: #18212d; --surface-2: #202c3a; --sidebar: #141d28;
+  --text: #e5edf7; --muted: #9baabd; --line: #2b3849; --accent: #67d4b4;
+  --accent-soft: #1c3733; --accent-strong: #a3e9d4; --blue: #85acfa; --blue-soft: #23344f;
+  --amber: #e3b569; --amber-soft: #3b3224; --purple: #b89cec; --purple-soft: #332a48;
+  --red: #f1a2a9; --red-soft: #402b34; --shadow: 0 4px 20px #0000000a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); }
+button, input, select { font: inherit; }
+button, select { cursor: pointer; }
+button { color: inherit; }
+button:disabled, select:disabled { cursor: wait; opacity: .5; }
+button:disabled { cursor: default; }
+button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+button { touch-action: manipulation; }
+a { color: inherit; }
+svg { flex-shrink: 0; }
+::selection { background: var(--accent-soft); color: var(--accent-strong); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

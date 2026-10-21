@@ -27,6 +27,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Check app data contract
+        run: npm test
       - name: Restore Vite source entry
         run: cp index.template.html index.html
       - name: Build
