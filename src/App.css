@@ -1,9 +1,21 @@
 .app-shell { min-height: 100dvh; }
+.install-panel { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; background: var(--accent-soft); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 26px; }
+.install-intro { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.install-intro img { border-radius: 9px; flex-shrink: 0; }
+.install-intro strong { display: block; font-size: 12px; font-weight: 600; }
+.install-intro p { color: var(--muted); margin: 5px 0 0; font-size: 11px; line-height: 1.7; }
+.install-instructions, .install-message { width: 100%; margin: 0; font-size: 12px; line-height: 1.8; }
+.install-instructions { padding-top: 12px; border-top: 1px solid var(--line); }
+.install-instructions p { color: var(--muted); margin: 10px 0 0; }
+.install-instructions ol { padding-left: 23px; margin: 10px 0; }
+.install-message { color: var(--muted); }
+@media (max-width: 760px) { .install-panel { padding: 15px; }.install-panel > .button { width: 100%; min-height: 42px; }.install-intro { align-items: start; } }
+@media (display-mode: standalone) { .install-panel { display: none; } }
 .app-logo { display: inline-flex; flex-shrink: 0; width: 39px; height: 39px; }
 .app-logo img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.app-logo .logo-dark { display: none; }
-:root[data-theme='dark'] .app-logo .logo-light { display: none; }
-:root[data-theme='dark'] .app-logo .logo-dark { display: block; }
+
+
+
 .app-logo.workspace-symbol { width: 36px; height: 36px; padding: 0; border: 0; }
 .app-logo.insight-logo { width: 64px; height: 64px; margin-top: 20px; }
 @media (max-width: 1000px) { .brand .app-logo { width: 38px; height: 38px; } }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { categoryLabels, csv, estados, inPeriod, matchesBoolean, perfiles, type Estado, type Feedback, type Stat } from './data'
 import { useControlData } from './useControlData'
+import InstallApp from './InstallApp'
 import './App.css'
 
 type View = 'resumen' | 'feedback' | 'logs' | 'formularios'
@@ -21,7 +22,7 @@ const paths: Record<IconName, ReactNode> = {
   users: <><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3m1-16a3 3 0 0 1 0 6m3 10v-3a6 6 0 0 0-2-4"/></>,
   chevron: <path d="m9 5 7 7-7 7"/>, copy: <><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></>,
 }
-function AppLogo({ className = '' }: { className?: string }) { return <span className={`app-logo ${className}`} aria-hidden="true"><img className="logo-light" src={`${import.meta.env.BASE_URL}branding/logo-jade.webp`} alt="" width="512" height="512"/><img className="logo-dark" src={`${import.meta.env.BASE_URL}branding/logo-forest.webp`} alt="" width="512" height="512"/></span> }
+function AppLogo({ className = '' }: { className?: string }) { return <span className={`app-logo ${className}`} aria-hidden="true"><img src={`${import.meta.env.BASE_URL}branding/logo-original.webp`} alt="" width="512" height="512"/></span> }
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg> }
 const views: { id: View; label: string; icon: IconName; description: string }[] = [
   { id: 'resumen', label: 'Resumen', icon: 'grid', description: 'Una mirada a lo que está pasando en la aplicación.' },
@@ -82,6 +83,7 @@ function App() {
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumb">Centro de control<Icon name="chevron" size={13}/><strong>{current.label}</strong></div><div className="header-right"><span className={`connection ${!online || hasErrors ? 'bad' : busy || cached ? 'waiting' : ''}`} role="status"><i/>{connection}</span><button className="icon-button" title="Volver a conectar" aria-label="Volver a conectar con Firebase" onClick={data.retry}><Icon name="refresh" size={17}/></button></div></header>
       <main id="main-content" tabIndex={-1}>
+        <InstallApp/>
         <div className="page-heading"><div><div className="eyebrow">ARANCEL BOLIVIA <span>/</span> OPERACIONES</div><h1>{view === 'resumen' ? 'Todo bajo control.' : current.label}</h1><p>{current.description}</p></div><div className="heading-date"><Icon name="clock" size={15}/>{new Intl.DateTimeFormat('es-BO', { dateStyle: 'long', timeZone: 'America/La_Paz' }).format(new Date())}</div></div>
         {hasErrors && <div className="error-banner" role="alert"><div><strong>No se pudieron sincronizar todos los datos.</strong>{data.errors.feedback && <p>Feedback y logs: {data.errors.feedback}</p>}{data.errors.stats && <p>Formularios: {data.errors.stats}</p>}</div><button className="button" onClick={data.retry}>Reintentar</button></div>}
         {!online && <div className="notice" role="status">Estás sin conexión. Los datos mostrados pueden estar desactualizados.</div>}

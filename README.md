@@ -28,6 +28,18 @@ Ambas colecciones se escuchan en tiempo real, con errores independientes. Se con
 - Filtros generales por período, edición y versión. CSV con todos los resultados filtrados, más allá de la página visible.
 - Detalles completos, mensajes multilínea, copia y descarga JSON; el JSON conserva campos adicionales recibidos.
 - Tema claro, oscuro y automático, con preferencia persistente y adaptación a cambios del sistema.
-- Logos WebP originales de la app móvil en `public/branding/`: jade para tema claro, bosque para oscuro y original para el favicon. Se reutilizan en la cabecera de navegación, el espacio de trabajo y el resumen, sin modificar los archivos de la app móvil.
+- Logo original de la app móvil (`lib/tema/logos/logo-512-original.webp`) en navegación, espacio de trabajo, resumen y favicon, en ambos temas. El icono PNG de 192 px se copia del lanzador Android de la misma app.
 
 La autenticación anónima y las reglas existentes deben permitir leer ambas colecciones y actualizar `estado` en `feedbacks`. Los fallos de escritura se muestran en pantalla y Firestore revierte los cambios rechazados. El panel no modifica reglas, servicios de la app ni documentos del cuestionario. No crea datos de ejemplo en producción.
+
+## Instalación como aplicación (PWA)
+
+La versión de producción incluye un manifest con identidad propia (`AB Control`), iconos de 192 y 512 px y apertura en ventana independiente. `start_url`, `id`, `scope` y los recursos se resuelven dentro de `/Estadisticas/`, compatible con GitHub Pages. Se requiere HTTPS o localhost.
+
+El botón **Instalar aplicación** abre el diálogo nativo cuando el navegador entrega `beforeinstallprompt`. En caso contrario muestra instrucciones para el menú del navegador; la disponibilidad depende de sus criterios, la interacción previa y de si ya está instalada. La confirmación `appinstalled` o el modo `standalone` ocultan el botón. En iPhone se indican los pasos desde Safari.
+
+`npm run build` genera `dist/sw.js` con una versión derivada de los archivos compilados. El service worker guarda solo la interfaz y los iconos; no intercepta ni guarda solicitudes de Firebase, autenticación, feedback o formularios. Abrir la interfaz sin conexión no garantiza disponer de datos ni permite sincronizar cambios sin conexión. Las actualizaciones esperan al cierre de las ventanas de la versión anterior. El servidor de desarrollo no registra service workers: para comprobar el comportamiento final, ejecutar `npm run build` y `npm run preview`.
+
+## Privacidad
+
+Un repositorio privado no protege por sí mismo una web pública ni sus datos de Firebase. El panel actual conserva el acceso anónimo existente: para un uso restringido, implementar autenticación de administradores y reglas de Firestore que permitan la lectura y actualización exclusivamente a ellos, manteniendo los permisos de envío de la app móvil. Las reglas remotas no forman parte de este repositorio y no se han verificado.
